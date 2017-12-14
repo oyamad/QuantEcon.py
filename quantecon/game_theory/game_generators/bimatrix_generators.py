@@ -21,7 +21,10 @@ the 2-player games studied by Fearnley, Igwe, and Savani (2015):
 
 * Tournament Games (`tournament_game`)
 
-* Unit vector Games (`unit_vector_game`)
+* Unit vector Games (`unit_vector_game`): These games were introduced by
+  R. Savani and B. von Stengel (2015). Payoffs for the column player are
+  chosen randomly from the [0, 1) range. For the row player, each column
+  contains exactly one 1 payoff and the rest is 0.
 
 Large part of the code here is based on the C code available at
 https://github.com/bimatrix-games/bimatrix-generators distributed under
@@ -359,3 +362,62 @@ def _populate_sgc_payoff_arrays(payoff_arrays):
         payoff_arrays[0][i+1, j+1] = 0.75
         payoff_arrays[1][j, i+1] = 0.75
         payoff_arrays[1][j+1, i] = 0.75
+
+
+def unit_vector_game(n, avoid_pure_nash=False, random_state=None):
+    """
+    Return a NormalFormGame instance of the 2-player game introduced by R.
+    Savani and B. von Stengel (2015). Payoffs for the column player are
+    chosen randomly from the [0, 1) range. For the row player, each column
+    contains exactly one 1 payoff and the rest is 0.
+
+    Parameters
+    ----------
+    n : scalar(int)
+        Positive integer determining the number of actions.
+    avoid_pure_nash : bool, optional(default=False)
+        If True, the row player's payoffs will be placed in order to avoid pure
+        Nash equilibria.
+    random_state : int or np.random.RandomState, optional
+        Random seed (integer) or np.random.RandomState instance to set
+        the initial state of the random number generator for
+        reproducibility. If None, a randomly initialized RandomState is
+        used.
+
+    Returns
+    -------
+    g : NormalFormGame
+
+    Examples
+    --------
+    >>> g = unit_vector_game(3)
+    >>> g.players[0]
+    Player([[ 0.,  0.,  0.],
+            [ 1.,  1.,  0.],
+            [ 0.,  0.,  1.]])
+    >>> g.players[1]
+    Player([[ 0.41147657,  0.02793785,  0.52289046],
+            [ 0.71593493,  0.34106604,  0.35070381],
+            [ 0.37609707,  0.28125201,  0.38812991]])
+
+    """
+    random_state = check_random_state(random_state)
+    payoff_array_p1 = random_state.random_sample((n, n))
+    payoff_array_p0 = np.zeros((n, n))
+    if not avoid_pure_nash:
+        ones_index = random_state.randint(n, size=n)
+        for i in range(n):
+            payoff_array_p0[ones_index[i], i] = 1.
+    else:
+        row_max = np.argwhere(payoff_array_p1 == np.amax(payoff_array_p1,
+                                                         axis=0))
+        for i in range(n):
+            one_index = random_state.randint(n)
+            indices_to_avoid = row_max[:, 1][row_max[:, 0] == i]
+            while one_index in indices_to_avoid:
+                one_index = random_state.randint(n)
+            payoff_array_p0[one_index, i] = 1.
+
+    g = NormalFormGame([Player(payoff_array_p0),
+                        Player(payoff_array_p1)])
+    return g
