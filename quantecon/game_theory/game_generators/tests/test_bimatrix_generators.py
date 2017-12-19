@@ -7,7 +7,9 @@ from numpy.testing import assert_array_equal
 from nose.tools import eq_, ok_
 from quantecon.gridtools import num_compositions
 
-from quantecon.game_theory import blotto_game, ranking_game, sgc_game
+from quantecon.game_theory import (
+    blotto_game, ranking_game, sgc_game, unit_vector_game, pure_nash_brute
+)
 
 
 class TestBlottoGame:
@@ -82,6 +84,37 @@ def test_sgc_game():
 
     g = sgc_game(k)
     assert_array_equal(g.payoff_profile_array, bimatrix)
+
+
+class TestUnitVectorGame:
+    def setUp(self):
+        self.n = 100
+        self.g = unit_vector_game(self.n)
+
+    def test_size(self):
+        eq_(self.g.nums_actions, (self.n, self.n))
+
+    def test_payoffs(self):
+        # Player 0
+        ok_((np.sum(self.g.players[0].payoff_array, axis=0) == 1).all())
+
+        # Player 1
+        assert_array_equal(np.clip(self.g.players[1].payoff_array, 0, 1),
+                           self.g.players[1].payoff_array)
+
+    def test_avoid_pure_nash(self):
+        ne = pure_nash_brute(unit_vector_game(self.n, avoid_pure_nash=True))
+        ok_(not ne)
+
+    def test_seed(self):
+        seed = 0
+        n = 100
+        g0 = unit_vector_game(n, random_state=seed)
+        g1 = unit_vector_game(n, random_state=seed)
+
+        for i in range(g0.N):
+            assert_array_equal(g0.players[i].payoff_array,
+                               g1.players[i].payoff_array)
 
 
 if __name__ == '__main__':
