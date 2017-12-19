@@ -33,7 +33,7 @@ class TestBlottoGame:
         rho = -0.5
         g0 = blotto_game(h, T, rho, random_state=seed)
         g1 = blotto_game(h, T, rho, random_state=seed)
-        for i in range(self.g.N):
+        for i in range(g0.N):
             assert_array_equal(g0.players[i].payoff_array,
                                g1.players[i].payoff_array)
 
@@ -61,7 +61,7 @@ class TestRankingGame:
         n = 100
         g0 = ranking_game(n, random_state=seed)
         g1 = ranking_game(n, random_state=seed)
-        for i in range(self.g.N):
+        for i in range(g0.N):
             assert_array_equal(g0.players[i].payoff_array,
                                g1.players[i].payoff_array)
 
