@@ -10,7 +10,7 @@ from .pivoting import _pivoting, _lex_min_ratio_test
 FEA_TOL = 1e-6
 
 
-def solve_tableau(tableau, basis, max_iter=10**6, phase=2):
+def solve_tableau(tableau, basis, max_iter=10**6, skip_aux=True):
     """
     Perform the simplex algorithm on a given tableau in canonical form.
 
@@ -42,8 +42,9 @@ def solve_tableau(tableau, basis, max_iter=10**6, phase=2):
     max_iter : scalar(int), optional(default=10**6)
         Maximum number of pivoting steps.
 
-    phase : scalar(int), optional(default=2)
-        Phase of the simplex algorithm (1 or 2).
+    skip_aux : bool, optional(default=True)
+        Whether to skip the coefficients of the auxiliary (or
+        artificial) variables in pivot column selection.
 
     """
     L = tableau.shape[0] - 1
@@ -56,16 +57,16 @@ def solve_tableau(tableau, basis, max_iter=10**6, phase=2):
     num_iter = 0
 
     while num_iter < max_iter:
-        pivcol_found, pivcol = _pivot_col(tableau, phase)
+        pivcol_found, pivcol = _pivot_col(tableau, skip_aux)
 
         if not pivcol_found:
             success = True
             status = 0
             break
 
-        art_start = tableau.shape[1] - L - 1
+        aux_start = tableau.shape[1] - L - 1
         pivrow = _lex_min_ratio_test(tableau[:-1, :], pivcol,
-                                     art_start, argmins)
+                                     aux_start, argmins)
         _pivoting(tableau, pivcol, pivrow)
         basis[pivrow] = pivcol
 
@@ -74,10 +75,10 @@ def solve_tableau(tableau, basis, max_iter=10**6, phase=2):
     return success, status, num_iter
 
 
-def _pivot_col(tableau, phase):
+def _pivot_col(tableau, skip_aux):
     L = tableau.shape[0] - 1
-    criterion_row_stop = tableau.shape[1] - 1  # Phase 1
-    if phase == 2:
+    criterion_row_stop = tableau.shape[1] - 1
+    if skip_aux:
         criterion_row_stop -= L
 
     found = False
@@ -94,14 +95,14 @@ def _pivot_col(tableau, phase):
 
 def get_solution(tableau, basis, x, lambd):
     n, L = x.size, lambd.size
-    art_start = tableau.shape[1] - L - 1
+    aux_start = tableau.shape[1] - L - 1
 
     x[:] = 0
     for i in range(L):
     	if basis[i] < n:
 	        x[basis[i]] = tableau[i, -1]
     for j in range(L):
-        lambd[j] = tableau[-1, art_start+j] * (-1)
+        lambd[j] = tableau[-1, aux_start+j] * (-1)
     fun = tableau[-1, -1] * (-1)
 
     return fun
