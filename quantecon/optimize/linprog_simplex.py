@@ -57,20 +57,26 @@ def solve_tableau(tableau, basis, max_iter=10**6, skip_aux=True):
     num_iter = 0
 
     while num_iter < max_iter:
+        num_iter += 1
+
         pivcol_found, pivcol = _pivot_col(tableau, skip_aux)
 
-        if not pivcol_found:
+        if not pivcol_found:  # Optimal
             success = True
             status = 0
             break
 
         aux_start = tableau.shape[1] - L - 1
-        pivrow = _lex_min_ratio_test(tableau[:-1, :], pivcol,
-                                     aux_start, argmins)
+        pivrow_found, pivrow = _lex_min_ratio_test(tableau[:-1, :], pivcol,
+                                                   aux_start, argmins)
+
+        if not pivrow_found:  # Unbounded
+            success = False
+            status = 3
+            break
+
         _pivoting(tableau, pivcol, pivrow)
         basis[pivrow] = pivcol
-
-        num_iter += 1
 
     return success, status, num_iter
 
@@ -93,7 +99,7 @@ def _pivot_col(tableau, skip_aux):
     return found, pivcol
 
 
-def get_solution(tableau, basis, x, lambd):
+def get_solution(tableau, basis, x, lambd, b_signs):
     n, L = x.size, lambd.size
     aux_start = tableau.shape[1] - L - 1
 
@@ -102,7 +108,9 @@ def get_solution(tableau, basis, x, lambd):
     	if basis[i] < n:
 	        x[basis[i]] = tableau[i, -1]
     for j in range(L):
-        lambd[j] = tableau[-1, aux_start+j] * (-1)
+        lambd[j] = tableau[-1, aux_start+j]
+        if lambd[j] != 0 and b_signs[j]:
+            lambd[j] *= -1
     fun = tableau[-1, -1] * (-1)
 
     return fun
