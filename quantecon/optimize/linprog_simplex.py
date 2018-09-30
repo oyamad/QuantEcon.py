@@ -2,12 +2,128 @@
 Contain a linear programming solver routine based on the Simplex Method.
 
 """
+from collections import namedtuple
 import numpy as np
 from numba import jit
 from .pivoting import _pivoting, _lex_min_ratio_test
 
 
 FEA_TOL = 1e-6
+
+
+SimplexResult = namedtuple(
+    'SimplexResult', ['x', 'lambd', 'fun', 'success', 'status', 'num_iter']
+)
+
+
+def linprog_simplex(c, A_ub=np.empty((0, 0)), b_ub=np.empty((0,)),
+                    A_eq=np.empty((0, 0)), b_eq=np.empty((0,)), max_iter=10**6,
+                    tableau=None, basis=None, x=None, lambd=None):
+    n, m, k = c.shape[0], A_ub.shape[0], A_eq.shape[0]
+    L = m + k
+
+    if tableau is None:
+        tableau = np.empty((L+1, n+m+L+1))
+    if basis is None:
+        basis = np.empty(L, dtype=np.int_)
+    if x is None:
+        x = np.empty(n)
+    if lambd is None:
+        lambd = np.empty(L)
+
+    num_iter = 0
+    fun = -np.inf
+
+    b_signs = np.empty(L, dtype=np.bool_)
+    for i in range(m):
+        b_signs[i] = True if b_ub[i] >= 0 else False
+    for i in range(k):
+        b_signs[m+i] = True if b_eq[i] >= 0 else False
+
+    # Construct initial tableau for Phase 1
+    _initialize_tableau(A_ub, b_ub, A_eq, b_eq, tableau, basis)
+
+    # Phase 1
+    success, status, num_iter_1 = \
+        solve_tableau(tableau, basis, max_iter, skip_aux=False)
+    num_iter += num_iter_1
+    if not success:  # max_iter exceeded
+        return SimplexResult(x, lambd, fun, success, status, num_iter)
+    if tableau[-1, -1] > FEA_TOL:  # Infeasible
+        success = False
+        status = 2
+        return SimplexResult(x, lambd, fun, success, status, num_iter)
+
+    # Modify the criterion row for Phase 2
+    _set_criterion_row(c, basis, tableau)
+
+    # Phase 2
+    success, status, num_iter_2 = \
+        solve_tableau(tableau, basis, max_iter-num_iter, skip_aux=True)
+    num_iter += num_iter_2
+    fun = get_solution(tableau, basis, x, lambd, b_signs)
+
+    return SimplexResult(x, lambd, fun, success, status, num_iter)
+
+
+def _initialize_tableau(A_ub, b_ub, A_eq, b_eq, tableau, basis):
+    m, k = A_ub.shape[0], A_eq.shape[0]
+    L = m + k
+    n = tableau.shape[1] - (m+L+1)
+
+    for i in range(m):
+        for j in range(n):
+            tableau[i, j] = A_ub[i, j]
+    for i in range(k):
+        for j in range(n):
+            tableau[m+i, j] = A_eq[i, j]
+
+    tableau[:L, n:-1] = 0
+
+    for i in range(m):
+        tableau[i, -1] = b_ub[i]
+        if tableau[i, -1] < 0:
+            for j in range(n):
+                tableau[i, j] *= -1
+            tableau[i, n+i] = -1
+            tableau[i, -1] *= -1
+        else:
+            tableau[i, n+i] = 1
+        tableau[i, n+m+i] = 1
+    for i in range(k):
+        tableau[m+i, -1] = b_eq[i]
+        if tableau[m+i, -1] < 0:
+            for j in range(n):
+                tableau[m+i, j] *= -1
+            tableau[m+i, -1] *= -1
+        tableau[m+i, n+m+m+i] = 1
+
+    tableau[-1, :] = 0
+    for i in range(L):
+        for j in range(n+m):
+            tableau[-1, j] += tableau[i, j]
+        tableau[-1, -1] += tableau[i, -1]
+
+    for i in range(L):
+        basis[i] = n+m+i
+
+    return tableau, basis
+
+
+def _set_criterion_row(c, basis, tableau):
+    n = c.shape[0]
+    L = basis.shape[0]
+
+    for j in range(n):
+        tableau[-1, j] = c[j]
+    tableau[-1, n:] = 0
+
+    for i in range(L):
+        multiplier = tableau[-1, basis[i]]
+        for j in range(tableau.shape[1]):
+            tableau[-1, j] -= tableau[i, j] * multiplier
+
+    return tableau
 
 
 def solve_tableau(tableau, basis, max_iter=10**6, skip_aux=True):
@@ -105,8 +221,8 @@ def get_solution(tableau, basis, x, lambd, b_signs):
 
     x[:] = 0
     for i in range(L):
-    	if basis[i] < n:
-	        x[basis[i]] = tableau[i, -1]
+        if basis[i] < n:
+            x[basis[i]] = tableau[i, -1]
     for j in range(L):
         lambd[j] = tableau[-1, aux_start+j]
         if lambd[j] != 0 and b_signs[j]:
