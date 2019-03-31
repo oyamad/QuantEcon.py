@@ -20,8 +20,8 @@ def linprog_simplex(c, A_ub=np.empty((0, 0)), b_ub=np.empty((0,)),
                     A_eq=np.empty((0, 0)), b_eq=np.empty((0,)), max_iter=10**6,
                     tableau=None, basis=None, x=None, lambd=None):
     """
-    Solve a linear linear programming in the following form
-    by the simplex algorithm:
+    Solve a linear program in the following form by the simplex
+    algorithm (with the lexicographic pivoting rule):
 
         maximize:     c @ x
 
@@ -29,67 +29,62 @@ def linprog_simplex(c, A_ub=np.empty((0, 0)), b_ub=np.empty((0,)),
                       A_eq @ x == b_eq
                       x >= 0
 
-    where c is of shape (n,1), A_ub is of shape (m, n),
-    and A_eq is of shape (k, n).
-
     Parameters
     ----------
     c : ndarray(float, ndim=1)
-        ndarray of shape (n,) containing coefficients of the linear objective
-        function to be maximized.
+        ndarray of shape (n,).
 
-    A_ub : ndarray(float, ndim=2), optional(default=np.empty((0, 0)))
-        ndarray of shape (m, n) such that A_eq @ x gives the values of
-        the inequality constraints at x.
+    A_ub : ndarray(float, ndim=2), optional
+        ndarray of shape (m, n).
 
-    b_ub : ndarray(float, ndim=1), optional(default=np.empty((0,)))
-        ndarray of shape (m,) representing the RHS of each inequality constraint
-        (row) in A_ub.
+    b_ub : ndarray(float, ndim=1), optional
+        ndarray of shape (m,).
 
-    A_eq : ndarray(float, ndim=2), optional(default=np.empty((0, 0)))
-        ndarray of shape (k, n) such that A_eq @ x gives the values of
-        the equality constraints at x.
+    A_eq : ndarray(float, ndim=2), optional
+        ndarray of shape (k, n).
 
-    b_eq : ndarray(float, ndim=1), optional(default=np.empty((0,)))
-        ndarray of shape (k,) representing the RHS of each equality constraint
-        (row) in A_eq.
+    b_eq : ndarray(float, ndim=1), optional
+        ndarray of shape (k,).
 
-    maxiter : int, optional(default=10**6)
+    max_iter : int, optional(default=10**6)
         Maximum number of iteration to perform.
 
-    tableau : ndarray(float, ndim=2), optional(default=None)
-        ndarray of shape (m+k+1, n+m+m+k+1) containing the tableau.
+    tableau : ndarray(float, ndim=2), optional
+        Temporary ndarray of shape (L+1, n+m+L+1) to store the tableau,
+        where L=m+k. Modified in place.
 
-    basis : ndarray(int, ndim=1), optional(default=None)
-        ndarray of shape (m+k,) containing the basic variables.
+    basis : ndarray(int, ndim=1), optional
+        Temporary ndarray of shape (L,) to store the basic variables.
+        Modified in place.
 
-    x : ndarray(float, ndim=1), optional(default=None)
-        ndarray of shape (n,) containing the independent variable vector.
+    x : ndarray(float, ndim=1), optional
+        Output ndarray of shape (n,) to store the primal solution.
 
-    lambd : ndarray(float, ndim=1), optional(default=None)
-        ndarray of shape (m+n,) containing the dual variable vector.
+    lambd : ndarray(float, ndim=1), optional
+        Output ndarray of shape (L,) to store the dual solution.
 
     Returns
     -------
-    SimplexResult : namedtuple
+    res : SimplexResult
         namedtuple consisting of the fields:
+
             x : ndarray(float, ndim=1)
-                ndarray of shape (n,) containing the independent variable vector
-                which optimizes the primal problem.
+                ndarray of shape (n,) containing the primal solution.
 
             lambd : ndarray(float, ndim=1)
-                ndarray of shape (m+n,) containing the dual variable vector
-                which optimizes the dual problem.
+                ndarray of shape (L,) containing the dual solution.
 
             fun : float
                 Value of the objective function.
 
             success : bool
-                Returns True if the algorithm succeeded in finding an optimal
+                True if the algorithm succeeded in finding an optimal
                 solution.
 
             status : int
-                An integer representing the exis status of the optimization:
+                An integer representing the exit status of the
+                optimization:
+
                     0 : Optimization terminated successfully
                     1 : Iteration limit reached
                     2 : Problem appears to be infeasible
@@ -97,6 +92,10 @@ def linprog_simplex(c, A_ub=np.empty((0, 0)), b_ub=np.empty((0,)),
 
             num_iter : int
                 The number of iterations performed.
+
+    References
+    ----------
+    * K. C. Border, "The Gauss–Jordan and Simplex Algorithms," 2004.
 
     """
     n, m, k = c.shape[0], A_ub.shape[0], A_eq.shape[0]
@@ -148,9 +147,9 @@ def linprog_simplex(c, A_ub=np.empty((0, 0)), b_ub=np.empty((0,)),
 
 def _initialize_tableau(A_ub, b_ub, A_eq, b_eq, tableau, basis):
     """
-    Construct initial tableau for Phase 1.
+    Initialize the `tableau` and `basis` arrays in place for Phase 1.
 
-    Suppose that the original linear programming has the following form:
+    Suppose that the original linear program has the following form:
 
         maximize:     c @ x
 
@@ -158,47 +157,56 @@ def _initialize_tableau(A_ub, b_ub, A_eq, b_eq, tableau, basis):
                       A_eq @ x == b_eq
                       x >= 0
 
-    Let s be a vector of slack variables converting inequality constraint to
-    equality constraint so that the problem turns to be the standard form:
+    Let s be a vector of slack variables converting the inequality
+    constraint to an equality constraint so that the problem turns to be
+    the standard form:
 
         maximize:     c @ x
 
-            subject to:   A_ub @ x + s == b_ub
-                          A_eq @ x     == b_eq
-                          x, s         >= 0
+        subject to:   A_ub @ x + s == b_ub
+                      A_eq @ x     == b_eq
+                      x, s         >= 0
 
-    Then, let (z1, z2) be a vector of artificial variables used in Phase 1:
+    Then, let (z1, z2) be a vector of artificial variables for Phase 1:
     we solve the following LP:
 
         maximize:     - (1 @ z1 + 1 @ z2)
 
         subject to:   A_ub @ x + s + z1 == b_ub
-                      A_eq @ x  + z2    == b_eq
+                      A_eq @ x + z2     == b_eq
                       x, s, z1, z2      >= 0
 
     The tableau needs to be of shape (m+k+1, n+m+m+k+1).
 
     Parameters
     ----------
-    A_ub : see `linprog_simplex`
+    A_ub : ndarray(float, ndim=2)
+        ndarray of shape (m, n).
 
-    b_ub : see `linprog_simplex`
+    b_ub : ndarray(float, ndim=1)
+        ndarray of shape (m,).
 
-    A_eq : see `linprog_simplex`
+    A_eq : ndarray(float, ndim=2)
+        ndarray of shape (k, n).
 
-    b_eq : see `linprog_simplex`
+    b_eq : ndarray(float, ndim=1)
+        ndarray of shape (k,).
 
-    tableau : see `solve_tableau`
+    tableau : ndarray(float, ndim=2)
+        Empty ndarray of shape (L+1, n+m+L+1) to store the tableau,
+        where L=m+k. Modified in place.
 
-    basis : see `solve_tableau`
+    basis : ndarray(int, ndim=1)
+        Empty ndarray of shape (L,) to store the basic variables.
+        Modified in place.
 
     Returns
     -------
-    tableau : see `solve_tableau`
-        tableau for phase 1.
+    tableau : ndarray(float, ndim=2)
+        View to `tableau`.
 
-    basis : see `solve_tableau`
-        initial feasible basis, the artificial variables, for phase 1.
+    basis : ndarray(int, ndim=1)
+        View to `basis`.
 
     """
     m, k = A_ub.shape[0], A_eq.shape[0]
@@ -246,22 +254,24 @@ def _initialize_tableau(A_ub, b_ub, A_eq, b_eq, tableau, basis):
 
 def _set_criterion_row(c, basis, tableau):
     """
-    Modify the criterion row of the tableau for Phase 2:
-    when Phase 1 is completed, the last row of the tableau does not represent
-    the relative cost coefficients.
+    Modify the criterion row of the tableau for Phase 2.
 
     Parameters
     ----------
-    c : see `linprog_simplex`
+    c : ndarray(float, ndim=1)
+        ndarray of shape (n,).
 
-    basis : see `linprog_simplex`
+    basis : ndarray(int, ndim=1)
+        ndarray of shape (L,) containing the basis obtained by Phase 1.
 
-    tableau : see `linprog_simplex`
+    tableau : ndarray(float, ndim=2)
+        ndarray of shape (L+1, n+m+L+1) the tableau obtained by Phase 1.
+        Modified in place.
 
     Returns
     -------
-    tableau : see `linprog_simplex`
-        the last row contains the relative cost coefficients.
+    tableau : ndarray(float, ndim=2)
+        View to `tableau`.
 
     """
     n = c.shape[0]
@@ -317,11 +327,14 @@ def solve_tableau(tableau, basis, max_iter=10**6, skip_aux=True):
 
     Returns
     -------
-    success : see `linprog_simplex`
+    success : bool
+        True if the algorithm succeeded in finding an optimal solution.
 
-    status : see `linprog_simplex`
+    status : int
+        An integer representing the exit status of the optimization.
 
-    num_iter : see `linprog_simplex`
+    num_iter : int
+        The number of iterations performed.
 
     """
     L = tableau.shape[0] - 1
