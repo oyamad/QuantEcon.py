@@ -12,7 +12,7 @@ TOL_RATIO_DIFF = 1e-15
 
 
 @jit(nopython=True, cache=True)
-def _pivoting(tableau, pivot, pivot_row):
+def _pivoting(tableau, pivot_col, pivot_row):
     """
     Perform a pivoting step. Modify `tableau` in place.
 
@@ -21,8 +21,8 @@ def _pivoting(tableau, pivot, pivot_row):
     tableau : ndarray(float, ndim=2)
         Array containing the tableau.
 
-    pivot : scalar(int)
-        Pivot.
+    pivot_col : scalar(int)
+        Pivot column index.
 
     pivot_row : scalar(int)
         Pivot row index.
@@ -35,14 +35,14 @@ def _pivoting(tableau, pivot, pivot_row):
     """
     nrows, ncols = tableau.shape
 
-    pivot_elt = tableau[pivot_row, pivot]
+    pivot_elt = tableau[pivot_row, pivot_col]
     for j in range(ncols):
         tableau[pivot_row, j] /= pivot_elt
 
     for i in range(nrows):
         if i == pivot_row:
             continue
-        multiplier = tableau[i, pivot]
+        multiplier = tableau[i, pivot_col]
         if multiplier == 0:
             continue
         for j in range(ncols):
