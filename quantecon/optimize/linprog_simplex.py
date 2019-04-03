@@ -16,6 +16,7 @@ SimplexResult = namedtuple(
 )
 
 
+@jit(nopython=True, cache=True)
 def linprog_simplex(c, A_ub=np.empty((0, 0)), b_ub=np.empty((0,)),
                     A_eq=np.empty((0, 0)), b_eq=np.empty((0,)), max_iter=10**6,
                     tableau=None, basis=None, x=None, lambd=None):
@@ -145,6 +146,7 @@ def linprog_simplex(c, A_ub=np.empty((0, 0)), b_ub=np.empty((0,)),
     return SimplexResult(x, lambd, fun, success, status, num_iter)
 
 
+@jit(nopython=True, cache=True)
 def _initialize_tableau(A_ub, b_ub, A_eq, b_eq, tableau, basis):
     """
     Initialize the `tableau` and `basis` arrays in place for Phase 1.
@@ -252,6 +254,7 @@ def _initialize_tableau(A_ub, b_ub, A_eq, b_eq, tableau, basis):
     return tableau, basis
 
 
+@jit(nopython=True, cache=True)
 def _set_criterion_row(c, basis, tableau):
     """
     Modify the criterion row of the tableau for Phase 2.
@@ -289,6 +292,7 @@ def _set_criterion_row(c, basis, tableau):
     return tableau
 
 
+@jit(nopython=True, cache=True)
 def solve_tableau(tableau, basis, max_iter=10**6, skip_aux=True):
     """
     Perform the simplex algorithm on a given tableau in canonical form.
@@ -371,6 +375,7 @@ def solve_tableau(tableau, basis, max_iter=10**6, skip_aux=True):
     return success, status, num_iter
 
 
+@jit(nopython=True, cache=True)
 def _pivot_col(tableau, skip_aux):
     """
     Choose the column containing the pivot element: the column containing
@@ -412,6 +417,7 @@ def _pivot_col(tableau, skip_aux):
     return found, pivcol
 
 
+@jit(nopython=True, cache=True)
 def get_solution(tableau, basis, x, lambd, b_signs):
     """
     Fetch the optimal value of the linear programming.
