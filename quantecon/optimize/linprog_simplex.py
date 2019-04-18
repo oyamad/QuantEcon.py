@@ -24,11 +24,15 @@ def linprog_simplex(c, A_ub=np.empty((0, 0)), b_ub=np.empty((0,)),
     Solve a linear program in the following form by the simplex
     algorithm (with the lexicographic pivoting rule):
 
-        maximize:     c @ x
+    maximize::
 
-        subject to:   A_ub @ x <= b_ub
-                      A_eq @ x == b_eq
-                      x >= 0
+        c @ x
+
+    subject to::
+
+        A_ub @ x <= b_ub
+        A_eq @ x == b_eq
+               x >= 0
 
     Parameters
     ----------
@@ -84,7 +88,7 @@ def linprog_simplex(c, A_ub=np.empty((0, 0)), b_ub=np.empty((0,)),
 
             status : int
                 An integer representing the exit status of the
-                optimization:
+                optimization::
 
                     0 : Optimization terminated successfully
                     1 : Iteration limit reached
@@ -299,11 +303,15 @@ def solve_tableau(tableau, basis, max_iter=10**6, skip_aux=True):
 
     Used to solve a linear program in the following form:
 
-        maximize:     c @ x
+    maximize::
 
-        subject to:   A_ub @ x <= b_ub
-                      A_eq @ x == b_eq
-                      x >= 0
+        c @ x
+
+    subject to::
+
+        A_ub @ x <= b_ub
+        A_eq @ x == b_eq
+               x >= 0
 
     where A_ub is of shape (m, n) and A_eq is of shape (k, n). Thus,
     `tableau` is of shape (L+1, n+m+L+1), where L=m+k, and
@@ -435,7 +443,7 @@ def get_solution(tableau, basis, x, lambd, b_signs):
     b_signs : ndarray(bool, ndim=1)
         ndarray of shape (L,) where L is the number of constraints of the
         original linear programming.
-        The i-th element is True iff the i-th element of the vector (b_ub, b_eq)
+        The i-th element is True if the i-th element of the vector (b_ub, b_eq)
         is positive.
 
     Returns
@@ -458,3 +466,125 @@ def get_solution(tableau, basis, x, lambd, b_signs):
     fun = tableau[-1, -1] * (-1)
 
     return fun
+
+
+@jit(nopython=True, cache=True)
+def linprog_simplex_canonical(c, A_ub, b_ub, max_iter=10**6, tableau=None,
+                              basis=None, x=None, lambd=None):
+    """
+    Solve a linear program in canonical form by the simplex
+    algorithm (with the lexicographic pivoting rule):
+
+    maximize::
+
+        c @ x
+
+    subject to::
+
+        A_ub @ x <= b_ub
+               x >= 0
+
+    Note that all the elements of b_ub should be nonnegative.
+
+    Parameters
+    ----------
+    c : ndarray(float, ndim=1)
+        ndarray of shape (n,).
+
+    A_ub : ndarray(float, ndim=2), optional
+        ndarray of shape (m, n).
+
+    b_ub : ndarray(float, ndim=1), optional
+        ndarray of shape (m,). All elements should be nonnegative.
+
+    max_iter : int, optional(default=10**6)
+        Maximum number of iteration to perform.
+
+    tableau : ndarray(float, ndim=2), optional
+        Temporary ndarray of shape (L+1, n+m+L+1) to store the tableau,
+        where L=m+k. Modified in place.
+
+    basis : ndarray(int, ndim=1), optional
+        Temporary ndarray of shape (L,) to store the basic variables.
+        Modified in place.
+
+    x : ndarray(float, ndim=1), optional
+        Output ndarray of shape (n,) to store the primal solution.
+
+    lambd : ndarray(float, ndim=1), optional
+        Output ndarray of shape (L,) to store the dual solution.
+
+    Returns
+    -------
+    res : SimplexResult
+        namedtuple consisting of the fields:
+
+            x : ndarray(float, ndim=1)
+                ndarray of shape (n,) containing the primal solution.
+
+            lambd : ndarray(float, ndim=1)
+                ndarray of shape (L,) containing the dual solution.
+
+            fun : float
+                Value of the objective function.
+
+            success : bool
+                True if the algorithm succeeded in finding an optimal
+                solution.
+
+            status : int
+                An integer representing the exit status of the
+                optimization::
+
+                    0 : Optimization terminated successfully
+                    1 : Iteration limit reached
+                    2 : Problem appears to be infeasible
+                    3 : Problem apperas to be unbounded
+
+            num_iter : int
+                The number of iterations performed.
+
+    References
+    ----------
+    * K. C. Border, "The Gauss–Jordan and Simplex Algorithms," 2004.
+
+    """
+    n, m = c.shape[0], A_ub.shape[0]
+
+    if tableau is None:
+        tableau = np.empty((m+1, n+m+1))
+    if basis is None:
+        basis = np.empty(m, dtype=np.int_)
+    if x is None:
+        x = np.empty(n+m)
+    if lambd is None:
+        lambd = np.empty(m)
+
+    num_iter = 0
+    fun = -np.inf
+
+    b_signs = np.ones(m, dtype=np.bool_)
+
+    # initialize tableau
+    for i in range(m):
+        for j in range(n):
+            tableau[i, j] = A_ub[i, j]
+
+    tableau[:m, n:-1] = 0
+    for i in range(m):
+        tableau[i, n+i] = 1
+        tableau[i, -1] = b_ub[i]
+
+    tableau[-1, :] = 0
+    for j in range(n):
+        tableau[-1, j] = c[j]
+
+    for i in range(m):
+        basis[i] = n + i
+
+    # Phase 2
+    success, status, num_iter = \
+        solve_tableau(tableau, basis, max_iter, skip_aux=True)
+    fun = get_solution(tableau, basis, x, lambd, b_signs)
+
+    return SimplexResult(x, lambd, fun, success, status, num_iter)
