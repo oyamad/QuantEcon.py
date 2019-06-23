@@ -8,17 +8,20 @@ from numba import jit
 from .pivoting import _pivoting, _lex_min_ratio_test
 
 
-FEA_TOL = 1e-6
-
-
 SimplexResult = namedtuple(
     'SimplexResult', ['x', 'lambd', 'fun', 'success', 'status', 'num_iter']
 )
 
+PivOptions = namedtuple(
+    'PivOptions', ['fea_tol', 'tol_piv', 'tol_ratio_diff']
+)
+PivOptions.__new__.__defaults__ = (1e-6, 1e-10, 1e-15)
+
 
 @jit(nopython=True, cache=True)
 def linprog_simplex(c, A_ub=np.empty((0, 0)), b_ub=np.empty((0,)),
-                    A_eq=np.empty((0, 0)), b_eq=np.empty((0,)), max_iter=10**6,
+                    A_eq=np.empty((0, 0)), b_eq=np.empty((0,)),
+                    max_iter=10**6, piv_options=PivOptions(),
                     tableau=None, basis=None, x=None, lambd=None):
     """
     Solve a linear program in the following form by the simplex
@@ -129,11 +132,12 @@ def linprog_simplex(c, A_ub=np.empty((0, 0)), b_ub=np.empty((0,)),
 
     # Phase 1
     success, status, num_iter_1 = \
-        solve_tableau(tableau, basis, max_iter, skip_aux=False)
+        solve_tableau(tableau, basis, max_iter, skip_aux=False,
+                      piv_options=piv_options)
     num_iter += num_iter_1
     if not success:  # max_iter exceeded
         return SimplexResult(x, lambd, fun, success, status, num_iter)
-    if tableau[-1, -1] > FEA_TOL:  # Infeasible
+    if tableau[-1, -1] > piv_options.fea_tol:  # Infeasible
         success = False
         status = 2
         return SimplexResult(x, lambd, fun, success, status, num_iter)
@@ -143,7 +147,8 @@ def linprog_simplex(c, A_ub=np.empty((0, 0)), b_ub=np.empty((0,)),
 
     # Phase 2
     success, status, num_iter_2 = \
-        solve_tableau(tableau, basis, max_iter-num_iter, skip_aux=True)
+        solve_tableau(tableau, basis, max_iter-num_iter, skip_aux=True,
+                      piv_options=piv_options)
     num_iter += num_iter_2
     fun = get_solution(tableau, basis, x, lambd, b_signs)
 
@@ -309,7 +314,8 @@ def _set_criterion_row(c, basis, tableau):
 
 
 @jit(nopython=True, cache=True)
-def solve_tableau(tableau, basis, max_iter=10**6, skip_aux=True):
+def solve_tableau(tableau, basis, max_iter=10**6, skip_aux=True,
+                  piv_options=PivOptions()):
     """
     Perform the simplex algorithm on a given tableau in canonical form.
 
@@ -373,7 +379,7 @@ def solve_tableau(tableau, basis, max_iter=10**6, skip_aux=True):
     while num_iter < max_iter:
         num_iter += 1
 
-        pivcol_found, pivcol = _pivot_col(tableau, skip_aux)
+        pivcol_found, pivcol = _pivot_col(tableau, skip_aux, piv_options)
 
         if not pivcol_found:  # Optimal
             success = True
@@ -381,8 +387,10 @@ def solve_tableau(tableau, basis, max_iter=10**6, skip_aux=True):
             break
 
         aux_start = tableau.shape[1] - L - 1
-        pivrow_found, pivrow = _lex_min_ratio_test(tableau[:-1, :], pivcol,
-                                                   aux_start, argmins)
+        pivrow_found, pivrow = _lex_min_ratio_test(
+            tableau[:-1, :], pivcol, aux_start, argmins,
+            piv_options.tol_piv, piv_options.tol_ratio_diff
+        )
 
         if not pivrow_found:  # Unbounded
             success = False
@@ -396,7 +404,7 @@ def solve_tableau(tableau, basis, max_iter=10**6, skip_aux=True):
 
 
 @jit(nopython=True, cache=True)
-def _pivot_col(tableau, skip_aux):
+def _pivot_col(tableau, skip_aux, piv_options):
     """
     Choose the column containing the pivot element: the column
     containing the maximum positive element in the last row of the
@@ -431,7 +439,7 @@ def _pivot_col(tableau, skip_aux):
 
     found = False
     pivcol = -1
-    coeff = FEA_TOL
+    coeff = piv_options.fea_tol
     for j in range(criterion_row_stop):
         if tableau[-1, j] > coeff:
             coeff = tableau[-1, j]
