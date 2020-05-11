@@ -11,25 +11,6 @@ from itertools import product
 import glob
 from multiprocessing import Pool, cpu_count
 
-import warnings
-warnings.filterwarnings('ignore')
-
-
-%%time
-
-# import
-from quantecon.optimize import linprog_simplex
-#from quantecon.gridtools import cartesian
-
-import numpy as np
-import pandas as pd
-from matplotlib import pyplot as plt
-
-from collections import namedtuple
-from itertools import product
-import glob
-from multiprocessing import Pool, cpu_count
-
 
 def main(param_problem_pair):
     param = param_problem_pair[0]
