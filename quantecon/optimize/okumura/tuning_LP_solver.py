@@ -1,6 +1,6 @@
 # import
 from quantecon.optimize import linprog_simplex, PivOptions
-#from quantecon.gridtools import cartesian
+from quantecon.gridtools import cartesian
 
 import numpy as np
 import pandas as pd
@@ -13,21 +13,22 @@ from multiprocessing import Pool, cpu_count
 
 
 def main(row_i):
-    param_i = row_i // num_param
-    problem_i = row_i % num_param
+    param_i = row_i % num_param
+    problem_i = row_i // num_param
 
-    piv_options = PivOptions(*param_set[param_i])
+    param = param_set[param_i]
+    piv_options = PivOptions(*param)
 
     desired_fun = desired_funs[problem_i]
     res = linprog_simplex(cs[problem_i],
                           A_eq=A_eqs[problem_i],
-                          b_eq=A_ubs[problem_i],
-                          A_ub=b_eqs[problem_i],
+                          b_eq=b_eqs[problem_i],
+                          A_ub=A_ubs[problem_i],
                           b_ub=b_ubs[problem_i],
                           piv_options=piv_options,
                           max_iter=10_000)
 
-    result_dict = {'param': str(param), 'problem': problem_nb,
+    result_dict = {'param': str(param), 'problem': problem_i,
                    'res.fun': res.fun, 'desired_fun': -desired_fun,
                    'success?': np.isclose(res.fun, -desired_fun),
                    'status': res.status}
@@ -52,14 +53,14 @@ if __name__ == '__main__':
     for name in remove_list:
         problem_list.remove(data_dir + name + '.npz')
 
-    # fea_tol_list = [1e-5, 5e-6, 1e-6, 5e-7, 1e-7]
-    # tol_piv_list = [1e-7, 5e-8, 1e-8, 5e-9, 1e-9]
-    # tol_ratio_diff_list = [1e-15, 5e-15, 1e-14, 5e-14, 1e-13]
-    fea_tol_list = [1e-5, 1e-6]
-    tol_piv_list = [1e-7, 1e-8]
-    tol_ratio_diff_list = [1e-15, 1e-14]
+    fea_tol_list = [1e-5, 5e-6, 1e-6, 5e-7, 1e-7]
+    tol_piv_list = [1e-7, 5e-8, 1e-8, 5e-9, 1e-9]
+    tol_ratio_diff_list = [1e-15, 5e-15, 1e-14, 5e-14, 1e-13]
+    # fea_tol_list = [1e-5, 1e-6]
+    # tol_piv_list = [1e-7]
+    # tol_ratio_diff_list = [1e-15]
 
-    param_set = product(fea_tol_list, tol_piv_list, tol_ratio_diff_list)
+    param_set = cartesian((fea_tol_list, tol_piv_list, tol_ratio_diff_list))
 
 #     problem_list = ['./linprog_benchmark_files/AFIRO.npz',
 #                     './linprog_benchmark_files/AGG.npz']
@@ -85,18 +86,18 @@ if __name__ == '__main__':
     desired_funs = tuple(problem['obj'] for problem in problems)
 
     # parallelization
-    n_cores = cpu_count() // 2
-    with Pool(n_cores, maxtasksperchild=1000) as p:
-        result_dicts = p.imap(main, range(num_row))
+    n_cores = cpu_count()
+    p = Pool(n_cores)
+    result_dicts = p.imap_unordered(main, range(num_row))
 
     # convertion to pandas dataframe
     for row_index, result_dict in enumerate(result_dicts):
-        df['param'][row_index] = result_dict['param']
-        df['problem'][row_index] = result_dict['problem']
-        df['res.fun'][row_index] = result_dict['res.fun']
-        df['desired_fun'][row_index] = result_dict['desired_fun']
-        df['success?'][row_index] = result_dict['success?']
-        df['status'][row_index] = result_dict['status']
+        df.loc[row_index, 'param'] = result_dict['param']
+        df.loc[row_index, 'problem'] = result_dict['problem']
+        df.loc[row_index, 'res.fun'] = result_dict['res.fun']
+        df.loc[row_index, 'desired_fun'] = result_dict['desired_fun']
+        df.loc[row_index, 'success?'] = result_dict['success?']
+        df.loc[row_index, 'status'] = result_dict['status']
 
     print(df)
     df.to_csv('results.csv')
