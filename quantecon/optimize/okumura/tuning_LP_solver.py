@@ -1,5 +1,5 @@
 # import
-from quantecon.optimize import linprog_simplex
+from quantecon.optimize import linprog_simplex, PivOptions
 #from quantecon.gridtools import cartesian
 
 import numpy as np
@@ -12,19 +12,18 @@ import glob
 from multiprocessing import Pool, cpu_count
 
 
-def main(param_problem_pair):
-    param = param_problem_pair[0]
-    problem_nb = param_problem_pair[1]
+def main(row_i):
+    param_i = row_i // num_param
+    problem_i = row_i % num_param
 
-    piv_options = PivOptions(param[0], param[1], param[2])
+    piv_options = PivOptions(*param_set[param_i])
 
-    c = cs[problem_nb]
-    A_eq = A_eqs[problem_nb]
-    A_ub = A_ubs[problem_nb]
-    b_eq = b_eqs[problem_nb]
-    b_ub = b_ubs[problem_nb]
-    desired_fun = desired_funs[problem_nb]
-    res = linprog_simplex(c, A_eq=A_eq, b_eq=b_eq, A_ub=A_ub, b_ub=b_ub,
+    desired_fun = desired_funs[problem_i]
+    res = linprog_simplex(cs[problem_i],
+                          A_eq=A_eqs[problem_i],
+                          b_eq=A_ubs[problem_i],
+                          A_ub=b_eqs[problem_i],
+                          b_ub=b_ubs[problem_i],
                           piv_options=piv_options,
                           max_iter=10_000)
 
@@ -53,14 +52,13 @@ if __name__ == '__main__':
     for name in remove_list:
         problem_list.remove(data_dir + name + '.npz')
 
-    # Below, we work on a small problem set
-    PivOptions = namedtuple(
-        'PivOptions', ['fea_tol', 'tol_piv', 'tol_ratio_diff']
-    )
+    # fea_tol_list = [1e-5, 5e-6, 1e-6, 5e-7, 1e-7]
+    # tol_piv_list = [1e-7, 5e-8, 1e-8, 5e-9, 1e-9]
+    # tol_ratio_diff_list = [1e-15, 5e-15, 1e-14, 5e-14, 1e-13]
+    fea_tol_list = [1e-5, 1e-6]
+    tol_piv_list = [1e-7, 1e-8]
+    tol_ratio_diff_list = [1e-15, 1e-14]
 
-    fea_tol_list = [1e-5, 5e-6, 1e-6, 5e-7, 1e-7]
-    tol_piv_list = [1e-7, 5e-8, 1e-8, 5e-9, 1e-9]
-    tol_ratio_diff_list = [1e-15, 5e-15, 1e-14, 5e-14, 1e-13]
     param_set = product(fea_tol_list, tol_piv_list, tol_ratio_diff_list)
 
 #     problem_list = ['./linprog_benchmark_files/AFIRO.npz',
@@ -77,8 +75,6 @@ if __name__ == '__main__':
     df.columns = column_list
     row_index = 0
 
-    param_problem_list = product(param_set, range(num_problem))
-
     problems = [np.load(problem) for problem in problem_list]
 
     cs = tuple(-problem['c'] for problem in problems)
@@ -91,7 +87,7 @@ if __name__ == '__main__':
     # parallelization
     n_cores = cpu_count() // 2
     with Pool(n_cores, maxtasksperchild=1000) as p:
-        result_dicts = p.map(main, param_problem_list)
+        result_dicts = p.imap(main, range(num_row))
 
     # convertion to pandas dataframe
     for row_index, result_dict in enumerate(result_dicts):
