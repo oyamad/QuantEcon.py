@@ -9,8 +9,10 @@ import time
 import progressbar
 
 fea_tol_list = [1e-4, 1e-5, 1e-6, 1e-7, 1e-8]
-tol_piv_list = [1e-5, 1e-6, 1e-7]
-tol_ratio_diff_list = [1e-11, 1e-12, 1e-13, 1e-14, 1e-15]
+tol_piv_list = [1e-5, 1e-6, 1e-7, 1e-8, 1e-9, 1e-10, 1e-11, 1e-12]
+tol_ratio_diff_list = [1e-8, 1e-9, 1e-10, 1e-11, 1e-12, 1e-13, 1e-14, 1e-15]
+
+param_set = cartesian((fea_tol_list, tol_piv_list, tol_ratio_diff_list))
 
 param_set = cartesian((fea_tol_list, tol_piv_list, tol_ratio_diff_list))
 num_param = param_set.shape[0]
@@ -67,7 +69,7 @@ for param_i in range(num_param):
 
         exec_time.loc[param_i, problem_i] = time.time() - start_time_problem
 
-res.to_csv('results_complement.csv')
-exec_time.to_csv('exec_time_complement.csv')
+res.to_csv('results_big.csv')
+exec_time.to_csv('exec_time_big.csv')
 
 bar.finish()
