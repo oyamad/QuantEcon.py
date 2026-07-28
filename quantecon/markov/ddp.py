@@ -113,6 +113,7 @@ import warnings
 import numpy as np
 import scipy.sparse as sp
 
+from ..util import IndexMap
 from .core import MarkovChain
 from ._ddp_linprog_simplex import ddp_linprog_simplex
 from .utilities import (
@@ -184,7 +185,9 @@ class DiscreteDP:
         assigned to state `s`. The values are annotations, and play no
         role in the solution algorithms, which act on state indices;
         the controlled Markov chain returned as part of the solution
-        result is annotated with these values.
+        result is annotated with these values. Uniqueness is required
+        only for decoding, i.e., by `state_to_index`,
+        `DDPPolicyFunction`, and `DDPValueFunction`.
 
     action_values : array_like, optional(default=None)
         Array of values assigned to the actions, of length m. May be
@@ -192,7 +195,7 @@ class DiscreteDP:
         value assigned to action `a`. The values are annotations, and
         play no role in the solution algorithms; they are recorded in
         the solution result, and used to decode policies by
-        `DPSolveResult.sigma_values`.
+        `DPSolveResult.sigma_values` and `DDPPolicyFunction`.
 
     Attributes
     ----------
@@ -478,6 +481,7 @@ class DiscreteDP:
                     'data in state_values must be homogeneous in type'
                 )
             self._state_values = values
+        self._state_index_map = None  # Reset the cache for state_to_index
 
     @property
     def action_values(self):
@@ -507,6 +511,33 @@ class DiscreteDP:
                     'data in action_values must be homogeneous in type'
                 )
             self._action_values = values
+
+    def state_to_index(self, s):
+        """
+        Return the index of the state value `s`.
+
+        Requires `state_values` to be unique; the mapping is built on
+        the first call and cached until `state_values` is reset. If
+        `state_values` is None, states are identified with their
+        indices, and `s` itself is returned after a range check.
+
+        Parameters
+        ----------
+        s
+            State value, equal to an element (a row, if `state_values`
+            is 2-dimensional) of `state_values`.
+
+        Returns
+        -------
+        s_index : scalar(int)
+            Index of `s` in `state_values`.
+
+        """
+        if self._state_index_map is None:
+            self._state_index_map = _make_index_map(
+                self.state_values, self.num_states, 'state_values'
+            )
+        return self._state_index_map[s]
 
     def _check_action_feasibility(self):
         """
@@ -1170,6 +1201,97 @@ class DPSolveResult(dict):
 
     def __dir__(self):
         return self.keys()
+
+
+def _make_index_map(values, n, name):
+    """
+    Return an `IndexMap` over `values`, or over `range(n)` if `values`
+    is None (the identity map over indices). Raise `ValueError` with an
+    informative message if the values are not unique.
+
+    """
+    if values is None:
+        return IndexMap(range(n))
+    try:
+        return IndexMap(values)
+    except ValueError as e:
+        raise ValueError(f'{name} must be unique for decoding: {e}') \
+            from None
+
+
+class DDPPolicyFunction:
+    """
+    Callable optimal policy function generated from a `DPSolveResult`,
+    mapping a state value to the optimal action value.
+
+    Requires the `state_values` of the `DiscreteDP` instance solved to
+    be unique; the mapping from state values to indices is built once
+    at construction. If `state_values` is None, states are identified
+    with their indices; similarly for `action_values`.
+
+    Parameters
+    ----------
+    res : DPSolveResult
+        Solution result, as returned by `DiscreteDP.solve`.
+
+    Examples
+    --------
+    >>> R = [[5, 10], [-1, -float('inf')]]
+    >>> Q = [[(0.5, 0.5), (0, 1)], [(0, 1), (0.5, 0.5)]]
+    >>> ddp = DiscreteDP(R, Q, 0.95, state_values=['low', 'high'],
+    ...                  action_values=[0.0, 2.5])
+    >>> res = ddp.solve()
+    >>> pf = DDPPolicyFunction(res)
+    >>> float(pf('low'))
+    0.0
+
+    """
+    def __init__(self, res):
+        self._index_map = _make_index_map(
+            res.get('state_values'), len(res['sigma']), 'state_values'
+        )
+        self._sigma = res['sigma']
+        self._action_values = res.get('action_values')
+
+    def __call__(self, s):
+        """
+        Return the optimal action value at state value `s`.
+
+        """
+        a = self._sigma[self._index_map[s]]
+        if self._action_values is None:
+            return a
+        return self._action_values[a]
+
+
+class DDPValueFunction:
+    """
+    Callable optimal value function generated from a `DPSolveResult`,
+    mapping a state value to the optimal value.
+
+    Requires the `state_values` of the `DiscreteDP` instance solved to
+    be unique; the mapping from state values to indices is built once
+    at construction. If `state_values` is None, states are identified
+    with their indices.
+
+    Parameters
+    ----------
+    res : DPSolveResult
+        Solution result, as returned by `DiscreteDP.solve`.
+
+    """
+    def __init__(self, res):
+        self._index_map = _make_index_map(
+            res.get('state_values'), len(res['v']), 'state_values'
+        )
+        self._v = res['v']
+
+    def __call__(self, s):
+        """
+        Return the optimal value at state value `s`.
+
+        """
+        return self._v[self._index_map[s]]
 
 
 def backward_induction(ddp, T, v_term=None):

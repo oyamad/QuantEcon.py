@@ -662,3 +662,104 @@ class TestDiscreteDPActionValues:
         Q = [[(0.5, 0.5), (0, 1)], [(0, 1), (0.5, 0.5)]]
         res = DiscreteDP(R, Q, 0.95).solve()
         assert_array_equal(res.sigma_values, res.sigma)
+
+
+class TestDiscreteDPDecode:
+    def setup_method(self):
+        # From Puterman 2005, Section 3.1
+        beta = 0.95
+
+        n, m = 2, 2  # number of states, number of actions
+        R = [[5, 10], [-1, -np.inf]]
+        Q = np.empty((n, m, n))
+        Q[0, 0, :] = 0.5, 0.5
+        Q[0, 1, :] = 0, 1
+        Q[1, :, :] = 0, 1
+
+        s_indices = [0, 0, 1]
+        a_indices = [0, 1, 0]
+        R_sa = [R[0][0], R[0][1], R[1][0]]
+        Q_sa = np.asarray(Q)[s_indices, a_indices]
+
+        self.state_values = np.array([1.2, 3.4])
+        self.action_values = np.array([-1., 1.])
+        ddp0 = DiscreteDP(R, Q, beta, state_values=self.state_values,
+                          action_values=self.action_values)
+        ddp_sa = DiscreteDP(R_sa, Q_sa, beta, s_indices, a_indices,
+                            state_values=self.state_values,
+                            action_values=self.action_values)
+        self.ddps = [ddp0, ddp_sa]
+
+        # sigma_star = [0, 0], v_star as in TestDiscreteDP
+        self.v_star = [(5-5.5*beta)/((1-0.5*beta)*(1-beta)), -1/(1-beta)]
+
+    def test_state_to_index(self):
+        for ddp in self.ddps:
+            assert_(ddp.state_to_index(3.4) == 1)
+            assert_raises(KeyError, ddp.state_to_index, 5.6)
+
+    def test_state_to_index_identity_default(self):
+        R = [[5, 10], [-1, -np.inf]]
+        Q = [[(0.5, 0.5), (0, 1)], [(0, 1), (0.5, 0.5)]]
+        ddp = DiscreteDP(R, Q, 0.95)  # state_values is None
+        assert_(ddp.state_to_index(1) == 1)
+        assert_raises(KeyError, ddp.state_to_index, 2)
+
+    def test_state_to_index_cache_reset(self):
+        for ddp in self.ddps:
+            assert_(ddp.state_to_index(1.2) == 0)
+            ddp.state_values = [5.6, 7.8]
+            assert_(ddp.state_to_index(7.8) == 1)
+            assert_raises(KeyError, ddp.state_to_index, 1.2)
+            ddp.state_values = self.state_values
+
+    def test_state_to_index_duplicates_error(self):
+        for ddp in self.ddps:
+            ddp.state_values = [1.2, 1.2]  # Allowed as annotations
+            assert_raises(ValueError, ddp.state_to_index, 1.2)  # Decode
+            ddp.state_values = self.state_values
+
+    def test_solve_result_records_state_values(self):
+        for ddp in self.ddps:
+            res = ddp.solve(method='pi')
+            assert_array_equal(res.state_values, self.state_values)
+
+    def test_policy_value_functions(self):
+        from quantecon.markov import DDPPolicyFunction, DDPValueFunction
+        for ddp in self.ddps:
+            res = ddp.solve(method='pi')
+            pf = DDPPolicyFunction(res)
+            vf = DDPValueFunction(res)
+            for s_val, s in zip(self.state_values, [0, 1]):
+                assert_(pf(s_val) == self.action_values[res.sigma[s]])
+                assert_allclose(vf(s_val), self.v_star[s])
+            assert_raises(KeyError, pf, 5.6)
+            assert_raises(KeyError, vf, 5.6)
+
+    def test_policy_value_functions_identity_default(self):
+        from quantecon.markov import DDPPolicyFunction, DDPValueFunction
+        R = [[5, 10], [-1, -np.inf]]
+        Q = [[(0.5, 0.5), (0, 1)], [(0, 1), (0.5, 0.5)]]
+        res = DiscreteDP(R, Q, 0.95).solve(method='pi')
+        pf, vf = DDPPolicyFunction(res), DDPValueFunction(res)
+        for s in [0, 1]:
+            assert_(pf(s) == res.sigma[s])
+            assert_(vf(s) == res.v[s])
+        assert_raises(KeyError, pf, 2)
+
+    def test_policy_function_2dim_state_values(self):
+        # Household-style: states are (asset, productivity) pairs
+        from quantecon.markov import DDPPolicyFunction
+        beta = 0.95
+        a_vals = np.array([0., 1.])
+        z_vals = np.array([0.1, 1.0])
+        s_vals = np.array([(a, z) for z in z_vals for a in a_vals])
+        n, m = 4, 2
+        R = np.zeros((n, m))
+        Q = np.tile(1/n, (n, m, n))
+        ddp = DiscreteDP(R, Q, beta, state_values=s_vals,
+                         action_values=a_vals)
+        assert_(ddp.state_to_index((1., 0.1)) == 1)
+        res = ddp.solve(method='pi')
+        pf = DDPPolicyFunction(res)
+        assert_(pf((1., 0.1)) == a_vals[res.sigma[1]])
