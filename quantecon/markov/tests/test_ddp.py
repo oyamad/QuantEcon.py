@@ -493,3 +493,78 @@ def test_ddp_to_sa_and_to_product():
 
             for k in ["v", "sigma", "num_iter"]:
                 assert_allclose(sol1[k], sol2[k])
+
+
+class TestDiscreteDPStateValues:
+    def setup_method(self):
+        # From Puterman 2005, Section 3.1
+        beta = 0.95
+
+        # Formulation with R: n x m, Q: n x m x n
+        n, m = 2, 2  # number of states, number of actions
+        R = [[5, 10], [-1, -np.inf]]
+        Q = np.empty((n, m, n))
+        Q[0, 0, :] = 0.5, 0.5
+        Q[0, 1, :] = 0, 1
+        Q[1, :, :] = 0, 1
+
+        # Formulation with state-action pairs
+        s_indices = [0, 0, 1]
+        a_indices = [0, 1, 0]
+        R_sa = [R[0][0], R[0][1], R[1][0]]
+        Q_sa = np.asarray(Q)[s_indices, a_indices]
+
+        self.state_values = np.array([1.2, 3.4])
+        ddp0 = DiscreteDP(R, Q, beta, state_values=self.state_values)
+        ddp_sa = DiscreteDP(R_sa, Q_sa, beta, s_indices, a_indices,
+                            state_values=self.state_values)
+        self.ddps = [ddp0, ddp_sa]
+
+    def test_state_values_stored(self):
+        for ddp in self.ddps:
+            assert_array_equal(ddp.state_values, self.state_values)
+
+    def test_state_values_default_none(self):
+        R = [[5, 10], [-1, -np.inf]]
+        Q = [[(0.5, 0.5), (0, 1)], [(0, 1), (0.5, 0.5)]]
+        ddp = DiscreteDP(R, Q, 0.95)
+        assert_(ddp.state_values is None)
+
+    def test_state_values_setter(self):
+        for ddp in self.ddps:
+            ddp.state_values = [5, 6]
+            assert_array_equal(ddp.state_values, [5, 6])
+            ddp.state_values = None
+            assert_(ddp.state_values is None)
+            ddp.state_values = self.state_values
+
+    def test_state_values_2dim(self):
+        # Values may be vectors (e.g., (asset, productivity) pairs)
+        values_2d = np.array([[0., 0.1], [1., 0.1]])
+        for ddp in self.ddps:
+            ddp.state_values = values_2d
+            assert_array_equal(ddp.state_values, values_2d)
+            ddp.state_values = self.state_values
+
+    def test_state_values_invalid(self):
+        for ddp in self.ddps:
+            assert_raises(ValueError, setattr, ddp, 'state_values',
+                          [1.2, 3.4, 5.6])  # Wrong length
+            assert_raises(ValueError, setattr, ddp, 'state_values',
+                          [(0,), (0, 1)])  # Non-homogeneous
+        R = [[5, 10], [-1, -np.inf]]
+        Q = [[(0.5, 0.5), (0, 1)], [(0, 1), (0.5, 0.5)]]
+        assert_raises(ValueError, DiscreteDP, R, Q, 0.95,
+                      state_values=[1.2])
+
+    def test_controlled_mc_state_values(self):
+        for ddp in self.ddps:
+            for method in ['vi', 'pi', 'mpi']:
+                res = ddp.solve(method=method)
+                assert_array_equal(res.mc.state_values, self.state_values)
+
+    def test_to_sa_and_to_product_carry_state_values(self):
+        ddp0, ddp_sa = self.ddps
+        for ddp_new in [ddp0.to_sa_pair_form(), ddp0.to_sa_pair_form(False),
+                        ddp_sa.to_product_form()]:
+            assert_array_equal(ddp_new.state_values, self.state_values)

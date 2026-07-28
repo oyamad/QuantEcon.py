@@ -178,9 +178,17 @@ class DiscreteDP:
     a_indices : array_like(int, ndim=1), optional(default=None)
         Array containing the indices of the actions.
 
+    state_values : array_like, optional(default=None)
+        Array of values assigned to the states, of length n. May be
+        2-dimensional, in which case row `state_values[s]` is the value
+        assigned to state `s`. The values are annotations, and play no
+        role in the solution algorithms, which act on state indices;
+        the controlled Markov chain returned as part of the solution
+        result is annotated with these values.
+
     Attributes
     ----------
-    R, Q, beta : see Parameters.
+    R, Q, beta, state_values : see Parameters.
 
     num_states : scalar(int)
         Number of states.
@@ -296,7 +304,8 @@ class DiscreteDP:
     4
 
     """
-    def __init__(self, R, Q, beta, s_indices=None, a_indices=None):
+    def __init__(self, R, Q, beta, s_indices=None, a_indices=None,
+                 state_values=None):
         if not (0 <= beta <= 1):
             raise ValueError('beta must be in [0, 1]')
         if beta == 1:
@@ -411,6 +420,9 @@ class DiscreteDP:
         # Check that for every state, at least one action is feasible
         self._check_action_feasibility()
 
+        # Call the setter method
+        self.state_values = state_values
+
         self.epsilon = 1e-3
         self.max_iter = 250
 
@@ -422,6 +434,35 @@ class DiscreteDP:
         else:
             self._lineq_solve = np.linalg.solve
             self._I = np.identity(self.num_states)
+
+    @property
+    def state_values(self):
+        return self._state_values
+
+    @state_values.setter
+    def state_values(self, values):
+        """
+        Set state values of the DiscreteDP.
+
+        Parameters
+        ----------
+        values : array_like or None
+            Array of state values with length n, or None to unset.
+
+        """
+        if values is None:
+            self._state_values = None
+        else:
+            values = np.asarray(values)
+            if (values.ndim < 1) or (values.shape[0] != self.num_states):
+                raise ValueError(
+                    'state_values must be an array_like of length n'
+                )
+            if np.issubdtype(values.dtype, np.object_):
+                raise ValueError(
+                    'data in state_values must be homogeneous in type'
+                )
+            self._state_values = values
 
     def _check_action_feasibility(self):
         """
@@ -511,7 +552,8 @@ class DiscreteDP:
                 QL = sp.csr_matrix(self.Q[s_ind, a_ind])
             else:
                 QL = self.Q[s_ind, a_ind]
-            return DiscreteDP(RL, QL, self.beta, s_ind, a_ind)
+            return DiscreteDP(RL, QL, self.beta, s_ind, a_ind,
+                              state_values=self.state_values)
 
     def to_product_form(self):
         """
@@ -542,7 +584,8 @@ class DiscreteDP:
                               self.Q.toarray(), Q)
             else:
                 _fill_dense_Q(self.s_indices, self.a_indices, self.Q, Q)
-            return DiscreteDP(R, Q, self.beta)
+            return DiscreteDP(R, Q, self.beta,
+                              state_values=self.state_values)
         else:
             return self
 
@@ -984,11 +1027,12 @@ class DiscreteDP:
         Returns
         -------
         mc : MarkovChain
-            Controlled Markov chain.
+            Controlled Markov chain, with `state_values` attached if
+            set for this instance.
 
         """
         _, Q_sigma = self.RQ_sigma(sigma)
-        return MarkovChain(Q_sigma)
+        return MarkovChain(Q_sigma, state_values=self.state_values)
 
 
 class DPSolveResult(dict):
