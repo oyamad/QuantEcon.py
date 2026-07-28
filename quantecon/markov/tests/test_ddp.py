@@ -568,3 +568,97 @@ class TestDiscreteDPStateValues:
         for ddp_new in [ddp0.to_sa_pair_form(), ddp0.to_sa_pair_form(False),
                         ddp_sa.to_product_form()]:
             assert_array_equal(ddp_new.state_values, self.state_values)
+
+
+class TestDiscreteDPActionValues:
+    def setup_method(self):
+        # From Puterman 2005, Section 3.1
+        beta = 0.95
+
+        # Formulation with R: n x m, Q: n x m x n
+        n, m = 2, 2  # number of states, number of actions
+        R = [[5, 10], [-1, -np.inf]]
+        Q = np.empty((n, m, n))
+        Q[0, 0, :] = 0.5, 0.5
+        Q[0, 1, :] = 0, 1
+        Q[1, :, :] = 0, 1
+
+        # Formulation with state-action pairs
+        s_indices = [0, 0, 1]
+        a_indices = [0, 1, 0]
+        R_sa = [R[0][0], R[0][1], R[1][0]]
+        Q_sa = np.asarray(Q)[s_indices, a_indices]
+
+        self.action_values = np.array([-1., 1.])
+        ddp0 = DiscreteDP(R, Q, beta, action_values=self.action_values)
+        ddp_sa = DiscreteDP(R_sa, Q_sa, beta, s_indices, a_indices,
+                            action_values=self.action_values)
+        self.ddps = [ddp0, ddp_sa]
+
+    def test_action_values_stored(self):
+        for ddp in self.ddps:
+            assert_array_equal(ddp.action_values, self.action_values)
+
+    def test_action_values_default_none(self):
+        R = [[5, 10], [-1, -np.inf]]
+        Q = [[(0.5, 0.5), (0, 1)], [(0, 1), (0.5, 0.5)]]
+        ddp = DiscreteDP(R, Q, 0.95)
+        assert_(ddp.action_values is None)
+
+    def test_action_values_setter(self):
+        for ddp in self.ddps:
+            ddp.action_values = [5, 6]
+            assert_array_equal(ddp.action_values, [5, 6])
+            ddp.action_values = None
+            assert_(ddp.action_values is None)
+            ddp.action_values = self.action_values
+
+    def test_action_values_2dim(self):
+        values_2d = np.array([[0., 0.1], [1., 0.1]])
+        for ddp in self.ddps:
+            ddp.action_values = values_2d
+            assert_array_equal(ddp.action_values, values_2d)
+            ddp.action_values = self.action_values
+
+    def test_action_values_invalid(self):
+        for ddp in self.ddps:
+            assert_raises(ValueError, setattr, ddp, 'action_values',
+                          [-1., 1., 2.])  # Wrong length
+            assert_raises(ValueError, setattr, ddp, 'action_values',
+                          [(0,), (0, 1)])  # Non-homogeneous
+        R = [[5, 10], [-1, -np.inf]]
+        Q = [[(0.5, 0.5), (0, 1)], [(0, 1), (0.5, 0.5)]]
+        assert_raises(ValueError, DiscreteDP, R, Q, 0.95,
+                      action_values=[-1.])
+
+    def test_to_sa_pair_form_trailing_infeasible_action(self):
+        # A trailing action infeasible in every state is dropped by the
+        # conversion; action_values must be trimmed accordingly
+        R = np.array([[1., -np.inf], [2., -np.inf]])
+        Q = np.tile([0.5, 0.5], (2, 2, 1))
+        ddp = DiscreteDP(R, Q, 0.95, action_values=self.action_values)
+        for sparse_Q in [True, False]:
+            ddp_sa = ddp.to_sa_pair_form(sparse_Q)
+            assert_array_equal(ddp_sa.action_values,
+                               self.action_values[:1])
+
+    def test_to_sa_and_to_product_carry_action_values(self):
+        ddp0, ddp_sa = self.ddps
+        for ddp_new in [ddp0.to_sa_pair_form(), ddp0.to_sa_pair_form(False),
+                        ddp_sa.to_product_form()]:
+            assert_array_equal(ddp_new.action_values, self.action_values)
+
+    def test_solve_result_values_and_sigma_values(self):
+        for ddp in self.ddps:
+            for method in ['vi', 'pi', 'mpi', 'lp']:
+                res = ddp.solve(method=method)
+                assert_(res.state_values is None)  # Not set for these ddps
+                assert_array_equal(res.action_values, self.action_values)
+                # sigma_star = [0, 0], action_values[0] = -1.
+                assert_array_equal(res.sigma_values, [-1., -1.])
+
+    def test_sigma_values_identity_default(self):
+        R = [[5, 10], [-1, -np.inf]]
+        Q = [[(0.5, 0.5), (0, 1)], [(0, 1), (0.5, 0.5)]]
+        res = DiscreteDP(R, Q, 0.95).solve()
+        assert_array_equal(res.sigma_values, res.sigma)

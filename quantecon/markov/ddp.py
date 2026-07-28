@@ -186,9 +186,17 @@ class DiscreteDP:
         the controlled Markov chain returned as part of the solution
         result is annotated with these values.
 
+    action_values : array_like, optional(default=None)
+        Array of values assigned to the actions, of length m. May be
+        2-dimensional, in which case row `action_values[a]` is the
+        value assigned to action `a`. The values are annotations, and
+        play no role in the solution algorithms; they are recorded in
+        the solution result, and used to decode policies by
+        `DPSolveResult.sigma_values`.
+
     Attributes
     ----------
-    R, Q, beta, state_values : see Parameters.
+    R, Q, beta, state_values, action_values : see Parameters.
 
     num_states : scalar(int)
         Number of states.
@@ -305,7 +313,7 @@ class DiscreteDP:
 
     """
     def __init__(self, R, Q, beta, s_indices=None, a_indices=None,
-                 state_values=None):
+                 state_values=None, action_values=None):
         if not (0 <= beta <= 1):
             raise ValueError('beta must be in [0, 1]')
         if beta == 1:
@@ -420,8 +428,15 @@ class DiscreteDP:
         # Check that for every state, at least one action is feasible
         self._check_action_feasibility()
 
-        # Call the setter method
+        # Number of actions
+        if self._sa_pair:
+            self._num_actions = self.a_indices.max() + 1
+        else:
+            self._num_actions = self.R.shape[1]
+
+        # Call the setter methods
         self.state_values = state_values
+        self.action_values = action_values
 
         self.epsilon = 1e-3
         self.max_iter = 250
@@ -463,6 +478,35 @@ class DiscreteDP:
                     'data in state_values must be homogeneous in type'
                 )
             self._state_values = values
+
+    @property
+    def action_values(self):
+        return self._action_values
+
+    @action_values.setter
+    def action_values(self, values):
+        """
+        Set action values of the DiscreteDP.
+
+        Parameters
+        ----------
+        values : array_like or None
+            Array of action values with length m, or None to unset.
+
+        """
+        if values is None:
+            self._action_values = None
+        else:
+            values = np.asarray(values)
+            if (values.ndim < 1) or (values.shape[0] != self._num_actions):
+                raise ValueError(
+                    'action_values must be an array_like of length m'
+                )
+            if np.issubdtype(values.dtype, np.object_):
+                raise ValueError(
+                    'data in action_values must be homogeneous in type'
+                )
+            self._action_values = values
 
     def _check_action_feasibility(self):
         """
@@ -552,8 +596,17 @@ class DiscreteDP:
                 QL = sp.csr_matrix(self.Q[s_ind, a_ind])
             else:
                 QL = self.Q[s_ind, a_ind]
+            # Trailing actions infeasible in every state drop out of
+            # a_ind, shrinking the action count of the new instance;
+            # trim action_values accordingly (action labels are
+            # preserved by the conversion, so a slice is the correct
+            # restriction)
+            action_values = self.action_values
+            if action_values is not None:
+                action_values = action_values[:a_ind.max()+1]
             return DiscreteDP(RL, QL, self.beta, s_ind, a_ind,
-                              state_values=self.state_values)
+                              state_values=self.state_values,
+                              action_values=action_values)
 
     def to_product_form(self):
         """
@@ -585,7 +638,8 @@ class DiscreteDP:
             else:
                 _fill_dense_Q(self.s_indices, self.a_indices, self.Q, Q)
             return DiscreteDP(R, Q, self.beta,
-                              state_values=self.state_values)
+                              state_values=self.state_values,
+                              action_values=self.action_values)
         else:
             return self
 
@@ -871,6 +925,8 @@ class DiscreteDP:
                             sigma=sigma,
                             num_iter=num_iter,
                             mc=self.controlled_mc(sigma),
+                            state_values=self.state_values,
+                            action_values=self.action_values,
                             method='value iteration',
                             epsilon=epsilon,
                             max_iter=max_iter)
@@ -913,6 +969,8 @@ class DiscreteDP:
                             sigma=sigma,
                             num_iter=num_iter,
                             mc=self.controlled_mc(sigma),
+                            state_values=self.state_values,
+                            action_values=self.action_values,
                             method='policy iteration',
                             max_iter=max_iter)
 
@@ -972,6 +1030,8 @@ class DiscreteDP:
                             sigma=sigma,
                             num_iter=num_iter,
                             mc=self.controlled_mc(sigma),
+                            state_values=self.state_values,
+                            action_values=self.action_values,
                             method='modified policy iteration',
                             epsilon=epsilon,
                             max_iter=max_iter,
@@ -1010,6 +1070,8 @@ class DiscreteDP:
                             sigma=sigma,
                             num_iter=num_iter,
                             mc=self.controlled_mc(sigma),
+                            state_values=self.state_values,
+                            action_values=self.action_values,
                             method='linear programming',
                             max_iter=max_iter)
 
@@ -1051,7 +1113,18 @@ class DPSolveResult(dict):
         Number of iterations
 
     mc : MarkovChain
-        Controlled Markov chain
+        Controlled Markov chain, with the `state_values` attached if
+        set
+
+    state_values : ndarray or None
+        State values of the `DiscreteDP` instance solved
+
+    action_values : ndarray or None
+        Action values of the `DiscreteDP` instance solved
+
+    sigma_values : ndarray
+        Computed optimal policy function, decoded to action values
+        (`sigma` itself if `action_values` is None)
 
     method : str
         Method employed
@@ -1063,6 +1136,20 @@ class DPSolveResult(dict):
         Maximum number of iterations
 
     """
+    @property
+    def sigma_values(self):
+        """
+        Return the optimal policy function decoded to action values,
+        i.e., the array whose s-th element is
+        `action_values[sigma[s]]`. If `action_values` is None, return
+        `sigma` itself.
+
+        """
+        action_values = self.get('action_values')
+        if action_values is None:
+            return self['sigma']
+        return action_values[self['sigma']]
+
     # This is sourced from sicpy.optimize.OptimizeResult.
     def __getattr__(self, name):
         try:
