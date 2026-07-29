@@ -1,0 +1,189 @@
+# NOTES: DiscreteDP `from_functions` and a possible dolang bridge
+
+Design discussion record (2026-07-29) for
+[#228](https://github.com/QuantEcon/QuantEcon.py/issues/228)
+(simplified `DiscreteDP` interface, dolo-style), presupposing
+`state_values`/`action_values` attached to `DiscreteDP` as in
+[#248](https://github.com/QuantEcon/QuantEcon.py/issues/248) /
+[QuantEcon.jl#402](https://github.com/QuantEcon/QuantEcon.jl/pull/402).
+
+## 1. Two-layer conversion picture
+
+Converting a dolo-style model description to a `DiscreteDP` naturally
+happens in two stages:
+
+1. **Symbolic/compiled model object** — symbol tables (states,
+   exogenous, controls, parameters), calibration, compiled functions
+   (transition, reward, feasibility bounds), exogenous process spec,
+   grid spec. Continuous and grid-free.
+2. **Numeric arrays `DiscreteDP` already consumes** — `R`, sparse `Q`,
+   `beta`, `s_indices`, `a_indices`, plus value<->index mappings.
+
+`DiscreteDP` itself needs no change; the deliverable is the layer-1
+object (or its function-level equivalent) and the tabulation routine.
+
+## 2. Dolo/dolang internals (the "compiled functions")
+
+- Canonical spec: `dolo/compiler/recipes.yaml` — per equation type,
+  argument groups with time shifts and short names.
+  - `transition`: `(m,-1) (s,-1) (x,-1) (M,0) (p)` -> `(S,0)`, i.e.
+    `s_t = g(m_{t-1}, s_{t-1}, x_{t-1}, m_t; p)`.
+  - `felicity`: `(m,0) (s,0) (x,0) (p)` -> `(r,0)`, i.e.
+    `r = u(m_t, s_t, x_t; p)`. No dependence on next state.
+  - `controls_lb` / `controls_ub`: `(m,0) (s,0) (p)` -> bounds on `x`.
+- Compilation: `dolo/compiler/factories.py` (`get_factory` ->
+  `FlatFunctionFactory`; inlines the `definitions` block as a
+  triangular preamble) and `dolo/compiler/model.py`
+  (`__compile_functions__` -> `model.functions` dict). Both a
+  vectorized `gufun` and a **scalar njit `fun`** are produced; the
+  scalar one is callable from other njit code.
+- Call sites: `dolo/algos/value_iteration.py` —
+  `S = g(m, s, x, M, p)`, `r = felicity(m, s, x, p)`,
+  `lb = controls_lb(m, s, p)`, `ub = controls_ub(m, s, p)`;
+  exogenous discretized separately (`model.discretize()`).
+- **dolang is standalone**: `dolang.py` deps are numpy, sympy, lark,
+  PyYAML, numba (optional). No quantecon, no dolo. (Verified in its
+  pyproject.toml.) So a bridge needs dolang only, never dolo, and no
+  circular dependency arises (dolo -> quantecon is one-way).
+
+## 3. POMDPs.jl-style prototype (QuantEcon.jl `pomdps-extension`)
+
+`ext/QuantEconPOMDPsExt.jl`: `DiscreteDP(m::POMDPs.MDP)` tabulates a
+value-based interface (`states`, `actions(m, s)`, `reward(s, a, sp)`,
+`transition(s, a) -> SparseCat`, `discount`, `isterminal`) into
+sa-pair form with sparse `Q`, attaching `state_values`/`action_values`
+and using `IndexMap` for value->index. Python port would be a
+duck-typed model object + `from_mdp` classmethod: pure-Python double
+loop, COO -> CSR. Fine for moderate sizes; inherently not numbafiable
+(user methods are arbitrary Python).
+
+### Comparison with the dolo route
+
+Same five primitives (state space, feasible actions, reward,
+transition, discount); the differences all stem from symbolic vs
+programmatic:
+
+- dolo sees structure (`Q = 1{g} (x) Pi`, sparsity known a priori,
+  vectorizable); POMDPs models are black boxes, structure discovered
+  by enumeration.
+- dolo owns discretization (grids, tauchen); POMDPs presupposes a
+  finite model (user builds grids and chains).
+- POMDPs is more general where black-box: stochastic endogenous
+  transitions, sp-dependent rewards, arbitrary feasible sets,
+  terminal states.
+- The on-grid requirement appears as a modeling restriction (dolo) vs
+  a runtime closure check (POMDPs importer).
+
+Two-tier conclusion: a general importer (`from_mdp` / `from_functions`)
+plus, potentially, a structured dolang front end generating input for
+it.
+
+## 4. `from_functions` design (decided)
+
+**Value-based, single-step.** User-facing contracts (all callbacks
+Numba-jitted, passed as dispatcher arguments to njit kernels):
+
+- `reward(s, a) -> float` — values in, expected reward out. **No `sp`
+  argument**: `DiscreteDP`'s primitive is the expected reward; users
+  owning a jitted `transition` can compose sp-dependence themselves;
+  matches dolang's `felicity`. Truly sp-dependent rewards belong to
+  `from_mdp`.
+- `transition(s, a) -> (sp_values, probs)` — arrays; next-state
+  values located via Numba typed dict (`index_dict`).
+- `actions(s) -> array of action values` (feasible set at `s`);
+  `action_values` still required as the global enumeration (defines
+  action indices, attached to the result). `actions=None` = all
+  feasible.
+- `state_values`: `(n,)` or `(n, d)`; scalar keys for 1-D, UniTuple
+  keys for 2-D (key shape mirrors value shape).
+
+Implementation shape: dicts built once in Python; two-pass njit
+tabulation (`count` then `fill`) with exact-size preallocation;
+kernels generated by a per-`(d_s, d_a)` factory (tuple-key arity must
+be a compile-time constant); COO -> `scipy.sparse.csr_matrix`
+(duplicate `(i, j)` summed); constant-string errors inside njit, with
+a slow pure-Python diagnosis pass re-run on failure for good messages.
+
+Documented user contract: values returned by `transition`/`actions`
+must be **drawn from the grids** (bitwise equality); computed
+off-grid values must be snapped/lotteried by the caller. The
+exact-match dict is the runtime enforcement of "state space closed
+under transitions" (same check as `_next_state_index` in the Julia
+extension).
+
+### One-step vs two-step (index-based core + value adaptors)
+
+A dolang bridge would naturally produce index-based callbacks (its
+adaptor must searchsorted-locate `g`'s output anyway), so a private
+index-based core `_from_functions_i` wrapped by the value-based public
+method was considered. **Decision: implement single-step now; defer
+the layer until a second caller exists.**
+
+- The refactor later is cheap and mechanical: the public API is
+  identical under both designs (layering is invisible), so no
+  breakage; extracting the core = moving the dict-lookup lines from
+  kernels into adaptor factories; existing tests become the
+  regression harness. ~1 day.
+- The guessed seam may be wrong: a serious bridge might bypass the
+  pointwise kernel entirely (direct CSR assembly from the
+  `1{g} (x) Pi` Kronecker structure).
+- Cost-of-complexity axes for such decisions: (i) contracts to
+  maintain; (ii) code without a live caller (sharpest YAGNI
+  detector); (iii) test-matrix growth (x Numba specializations);
+  (iv) cognitive load per future change.
+- Cheap insurance bought instead: keep dict lookups syntactically
+  localized in the kernels; pin output conventions in
+  characterization tests (sa-pair ordering row-major by state then
+  `actions(s)` order, duplicate summing, empty-feasible-set
+  behavior); expose nothing speculative.
+
+Why QE.jl doesn't need the layering: no Numba boundary (everything is
+one JIT — generic dicts, arbitrary key types, rich errors in hot
+loops, automatic specialization) and no second, index-producing
+client. Exact-float-equality lookup is *not* Numba-specific (Julia's
+`IndexMap`/`Dict` is the same); the Numba-specific parts are fixed
+key arity/types, the jitted/non-jitted divide, constant-only error
+messages, per-dispatcher specialization.
+
+## 5. Bridge placement (if ever built)
+
+Preferred: in QE.py with **dolang as an optional extra**
+(`quantecon[dolang]`, lazy import) — the Python analogue of QE.jl's
+weak-dependency extension. The bridge defines its own light recipe
+(only transition, reward, bounds, calibration, exogenous, domain — no
+`arbitrage`), compiles with dolang, discretizes (grids +
+tauchen/rouwenhorst), and adapts to `from_functions` via small jitted
+closures. v1 restrictions: `g` independent of next-period exogenous
+`M`; `g` must land on the grid (later: lottery over neighbors).
+Alternative placements: in dolo (would require promoting a public
+low-level entry), or a third package (overhead disproportionate).
+
+## 6. `index_dict` (implemented)
+
+`quantecon/util/indexing.py`, exported as `quantecon.util.index_dict`
+and top-level `qe.index_dict`. Returns a **bare `numba.typed.Dict`**
+(wrapper classes can't be unboxed by Numba) mapping value -> int64
+index; float64/int64 key dtypes following input kind; scalar keys for
+`(n,)`, UniTuple keys for `(n, d)`; njit fill loop (textual codegen
+per column count) with pure-Python diagnosis passes (duplicates,
+non-finite, -0.0) only on failure. Python counterpart of QE.jl's
+`IndexMap` constructor, in function form.
+
+**Empirical finding worth remembering**: Numba typed dicts hash floats
+by **bit pattern**, so `-0.0` and `0.0` are *distinct keys* (unlike
+Python dicts, where they collide; verified on numba 0.63.1).
+Consequence: `-0.0` is rejected in `values` at build time; query keys
+possibly computed as `-0.0` can be normalized by adding `0.0`.
+
+Tests: `quantecon/util/tests/test_indexing.py`. Docs:
+`docs/source/util/indexing.rst`.
+
+## 7. Status / next steps
+
+- [x] `index_dict` implemented with tests and docs.
+- [ ] `from_functions` classmethod on `DiscreteDP` (value-based,
+      single-step, per Section 4), with characterization tests
+      pinning output conventions.
+- [ ] Possibly `from_mdp` (duck-typed model object) as the general,
+      non-jitted tier.
+- [ ] Dolang bridge: deferred; revisit Section 5 if/when decided.
