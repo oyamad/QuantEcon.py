@@ -64,6 +64,7 @@ name = "quantecon"
 exclude = [
   ".*",  # Any hidden folders or files
   "docs/",
+  "benchmarks/",
   "quantecon/tests/",
   "quantecon/util/tests",
   "Makefile",
