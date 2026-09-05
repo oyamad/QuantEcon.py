@@ -46,6 +46,8 @@ Kyohei Okumura and Quentin Batista in May-June 2020. It is not part of the
 - `results_2026_large.csv`: QAP12, QAP15, STOCFOR3 along `tol_piv` only.
 - `results_2026_maxiter.csv`: the hard problems with `max_iter = 100_000`
   at the leading combinations.
+- `scaling_experiment.py`, `results_2026_scaling.csv`: does equilibrating
+  the problem data let the default `tol_piv` succeed?
 - `analysis_2026.ipynb`: analysis of the rerun with the closeness
   criterion (relative error of the objective below 1e-6 with respect to
   `obj_ref`, regardless of the `success` flag).
@@ -97,8 +99,9 @@ optimum to a relative error below 1e-6:
 - `max_iter = 10_000` was the binding constraint for several problems:
   with 100,000 iterations, 25FV47, BNL2, TRUSS and D2Q06C are solved at the
   looser pivot tolerances (14,000 to 54,000 iterations). Combining
-  `tol_piv = 1e-4`, `tol_ratio_diff = 1e-11` and the larger budget solves
-  47 of 51; the remaining failures are DEGEN3, QAP8, TRUSS and WOOD1P.
+  `tol_piv = 1e-4` and the larger budget solves 46 of 51; the remaining
+  failures are DEGEN3, QAP8, WOOD1P and, depending on `tol_ratio_diff`,
+  SCTAP2 and DEGEN2 (at 1e-13) or TRUSS and FFFFF800 (at 1e-11).
   QAP12, QAP15 and STOCFOR3 do not finish within 10,000 iterations at any
   `tol_piv`.
 - `tol_ratio_diff` matters on degenerate problems, in both directions:
@@ -106,8 +109,25 @@ optimum to a relative error below 1e-6:
   while 1e-13 solves TRUSS where 1e-11 ends in a false "unbounded".
 - WOOD1P and SCTAP2 end as "unbounded" within a few hundred iterations at
   almost every setting and are the clearest test cases for the ratio test.
+- Mechanism: `tol_piv` acts as a guard against small pivots, not as a
+  zero detector. Tracing SCSD8 and SCTAP3 shows that a single pivot
+  element of size 1e-7 inflates the tableau by 15 to 35 orders of
+  magnitude, after which the "unbounded" verdict is taken on garbage.
+  Too large a `tol_piv` (1e-3) instead skips rows with genuinely positive
+  entries and lets the step leave the feasible region, producing wrong
+  optima that pass the optimality test.
+- Equilibration (`scaling_experiment.py`, `results_2026_scaling.csv`):
+  scaling the rows and columns of the problem data lets the default
+  `tol_piv = 1e-7` solve 11 of the 15 hardest problems instead of 6, the
+  same as `tol_piv = 1e-5`, including SCTAP2 which no tolerance setting
+  solved unscaled. SCSD8 becomes unsolved when scaled.
+- Changing the default `tol_piv` to 1e-5 loses no problem on this test
+  set, and on the 38 problems solved by both settings the objective values
+  agree to 1e-12 with identical pivot paths on 35 to 37 of them.
 
-Suggested next steps: move the default `tol_piv` from 1e-7 to 1e-5, and
-address the false-unbounded cases and the `tol_ratio_diff` trade-off in the
-refactor of `pivoting.py`, most likely with tolerances relative to the scale
-of the tableau rather than absolute ones.
+Suggested next steps: in the refactor of `pivoting.py`, make the ratio
+test prefer large pivots among near-minimal ratios (Harris-style two-pass
+test) or use tolerances relative to the scale of the tableau, possibly with
+equilibration of the input data; moving the default `tol_piv` to 1e-5 is a
+safe interim workaround. Keep WOOD1P, SCTAP2, SCSD8 and DEGEN3 as test
+cases.
